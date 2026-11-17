@@ -1,42 +1,112 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
 name: Dart
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [master]
+    # Pushing a version tag such as v0.2.0 also publishes a GitHub release.
+    tags: ["v*"]
   pull_request:
-    branches: [ "master" ]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request replaces the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  test:
+    name: Format, analyze, test
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # Note: This workflow uses the latest stable version of the Dart SDK.
-      # You can specify other versions if desired, see documentation here:
-      # https://github.com/dart-lang/setup-dart/blob/main/README.md
-      # - uses: dart-lang/setup-dart@v1
-      - uses: dart-lang/setup-dart@9a04e6d73cca37bd455e0608d7e5092f881fd603
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Check the tag matches the pubspec version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if ! grep -qx "version: ${GITHUB_REF_NAME#v}" pubspec.yaml; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match $(grep '^version:' pubspec.yaml) in pubspec.yaml"
+            exit 1
+          fi
 
       - name: Install dependencies
-        run: dart pub get
+        run: dart pub get --enforce-lockfile
 
-      # Uncomment this step to verify the use of 'dart format' on each commit.
-      # - name: Verify formatting
-      #   run: dart format --output=none --set-exit-if-changed .
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
 
-      # Consider passing '--fatal-infos' for slightly stricter analysis.
-      - name: Analyze project source
-        run: dart analyze
+      - name: Analyze
+        run: dart analyze --fatal-infos
 
-      # Your project will need to have tests in test/ and a dependency on
-      # package:test for this step to succeed. Note that Flutter projects will
-      # want to change this to 'flutter test'.
       - name: Run tests
         run: dart test
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            binary: roll-linux-x64
+          - os: macos-latest
+            name: macos-arm64
+            binary: roll-macos-arm64
+          - os: windows-latest
+            name: windows-x64
+            binary: roll-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get --enforce-lockfile
+
+      - name: Compile executable
+        run: dart compile exe bin/dungeondice.dart -o ${{ matrix.binary }}
+
+      - name: Smoke test
+        run: ./${{ matrix.binary }} 2d20 --dis
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: roll-${{ matrix.name }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create the release and attach the executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --title "Dungeon Dice ${GITHUB_REF_NAME#v}"
+          --generate-notes
+          --verify-tag
