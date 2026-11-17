@@ -103,6 +103,19 @@ A roll can have up to 1,000 dice, and a die can have from 2 to 1,000,000 sides.
 
 ## Install
 
+### Download
+
+Ready-made executables for Linux (x64), macOS (Apple silicon) and Windows (x64) are attached to each [release](https://github.com/GerardRagbir/DungeonDice-CLI/releases). On Linux and macOS, make the download executable and put it on your PATH:
+
+```
+chmod +x roll-macos-arm64
+mv roll-macos-arm64 /usr/local/bin/roll
+```
+
+The executables are not signed, so macOS may block the first run until you allow it in System Settings > Privacy & Security.
+
+### From source
+
 Requires [Dart](https://dart.dev/get-dart) 3.13 or later.
 
 Run from a clone without installing:
